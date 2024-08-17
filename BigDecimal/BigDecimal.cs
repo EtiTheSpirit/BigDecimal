@@ -1572,12 +1572,24 @@ namespace Star3D.Maths.Numbers {
 			} else if (checkType == 1) {
 				BigInteger min = BigInteger.CreateSaturating(TInteger.MinValue);
 				BigInteger max = BigInteger.CreateSaturating(TInteger.MaxValue);
-				if (truncated < min || truncated > max) throw new OverflowException();
+				if (truncated < min) {
+					result = (TOther)(object)TInteger.MinValue;
+					return true;
+				} else if (truncated > max) {
+					result = (TOther)(object)TInteger.MaxValue;
+					return true;
+				}
 				return TBigInteger.TryConvertToChecked((TBigInteger)(object)truncated, out result!);
 			} else if (checkType == 2) {
 				BigInteger min = BigInteger.CreateTruncating(TInteger.MinValue);
 				BigInteger max = BigInteger.CreateTruncating(TInteger.MaxValue);
-				if (truncated < min || truncated > max) throw new OverflowException();
+				if (truncated < min) {
+					result = (TOther)(object)TInteger.MinValue;
+					return true;
+				} else if (truncated > max) {
+					result = (TOther)(object)TInteger.MaxValue;
+					return true;
+				}
 				return TBigInteger.TryConvertToChecked((TBigInteger)(object)truncated, out result!);
 			}
 			throw new ArgumentOutOfRangeException(nameof(checkType));
