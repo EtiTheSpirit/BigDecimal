@@ -1447,19 +1447,115 @@ namespace Star3D.Maths.Numbers {
 				result = (TOther)(object)(decimal)value;
 				return true;
 			}
-			result = default!;
-			return false;
+			return TOther.TryConvertFromChecked(value, out result!);
 		}
 
 		/// <inheritdoc/>
 		static bool INumberBase<BigDecimal>.TryConvertToSaturating<TOther>(BigDecimal value, out TOther result) {
-			throw new NotImplementedException();
+			result = TOther.AdditiveIdentity;
+			if (result is BigInteger) {
+				result = (TOther)(object)Round(value).Mantissa;
+				return true;
+			} else if (result is BigDecimal) {
+				result = (TOther)(object)value;
+				return true;
+			} else if (result is sbyte) {
+				return IntCast<TOther, sbyte, BigInteger>(ref value, 1, out result);
+			} else if (result is byte) {
+				return IntCast<TOther, byte, BigInteger>(ref value, 1, out result);
+			} else if (result is short) {
+				return IntCast<TOther, short, BigInteger>(ref value, 1, out result);
+			} else if (result is ushort) {
+				return IntCast<TOther, ushort, BigInteger>(ref value, 1, out result);
+			} else if (result is int) {
+				return IntCast<TOther, int, BigInteger>(ref value, 1, out result);
+			} else if (result is uint) {
+				return IntCast<TOther, uint, BigInteger>(ref value, 1, out result);
+			} else if (result is long) {
+				return IntCast<TOther, long, BigInteger>(ref value, 1, out result);
+			} else if (result is ulong) {
+				return IntCast<TOther, ulong, BigInteger>(ref value, 1, out result);
+			} else if (result is Int128) {
+				return IntCast<TOther, Int128, BigInteger>(ref value, 1, out result);
+			} else if (result is UInt128) {
+				return IntCast<TOther, UInt128, BigInteger>(ref value, 1, out result);
+			} else if (result is Half) {
+				if (value > Half.MaxValue) value = Half.PositiveInfinity;
+				if (value < Half.MinValue) value = Half.NegativeInfinity;
+				result = (TOther)(object)(Half)value;
+				return true;
+			} else if (result is float) {
+				if (value > float.MaxValue) value = float.PositiveInfinity;
+				if (value < float.MinValue) value = float.NegativeInfinity;
+				result = (TOther)(object)(float)value;
+				return true;
+			} else if (result is double) {
+				if (value > double.MaxValue) value = double.PositiveInfinity;
+				if (value < double.MinValue) value = double.NegativeInfinity;
+				result = (TOther)(object)(double)value;
+				return true;
+			} else if (result is decimal) {
+				if (value > decimal.MaxValue) value = decimal.MaxValue;
+				if (value < decimal.MinValue) value = decimal.MinValue;
+				result = (TOther)(object)(decimal)value;
+				return true;
+			}
+			return TOther.TryConvertFromSaturating(value, out result!);
 		}
 
 		/// <inheritdoc/>
 		static bool INumberBase<BigDecimal>.TryConvertToTruncating<TOther>(BigDecimal value, out TOther result) {
-			throw new NotImplementedException();
+			result = TOther.AdditiveIdentity;
+			if (result is BigInteger) {
+				result = (TOther)(object)Round(value).Mantissa;
+				return true;
+			} else if (result is BigDecimal) {
+				result = (TOther)(object)value;
+				return true;
+			} else if (result is sbyte) {
+				return IntCast<TOther, sbyte, BigInteger>(ref value, 2, out result);
+			} else if (result is byte) {
+				return IntCast<TOther, byte, BigInteger>(ref value, 2, out result);
+			} else if (result is short) {
+				return IntCast<TOther, short, BigInteger>(ref value, 2, out result);
+			} else if (result is ushort) {
+				return IntCast<TOther, ushort, BigInteger>(ref value, 2, out result);
+			} else if (result is int) {
+				return IntCast<TOther, int, BigInteger>(ref value, 2, out result);
+			} else if (result is uint) {
+				return IntCast<TOther, uint, BigInteger>(ref value, 2, out result);
+			} else if (result is long) {
+				return IntCast<TOther, long, BigInteger>(ref value, 2, out result);
+			} else if (result is ulong) {
+				return IntCast<TOther, ulong, BigInteger>(ref value, 2, out result);
+			} else if (result is Int128) {
+				return IntCast<TOther, Int128, BigInteger>(ref value, 2, out result);
+			} else if (result is UInt128) {
+				return IntCast<TOther, UInt128, BigInteger>(ref value, 2, out result);
+			} else if (result is Half) {
+				if (value > Half.MaxValue) value = Half.MaxValue;
+				if (value < Half.MinValue) value = Half.MinValue;
+				result = (TOther)(object)(Half)value;
+				return true;
+			} else if (result is float) {
+				if (value > float.MaxValue) value = float.MaxValue;
+				if (value < float.MinValue) value = float.MinValue;
+				result = (TOther)(object)(float)value;
+				return true;
+			} else if (result is double) {
+				if (value > double.MaxValue) value = double.MaxValue;
+				if (value < double.MinValue) value = double.MinValue;
+				result = (TOther)(object)(double)value;
+				return true;
+			} else if (result is decimal) {
+				if (value > decimal.MaxValue) value = decimal.MaxValue;
+				if (value < decimal.MinValue) value = decimal.MinValue;
+				result = (TOther)(object)(decimal)value;
+				return true;
+			}
+			return TOther.TryConvertFromTruncating(value, out result!);
 		}
+
 		private static bool IntCast<TOther, TInteger, TBigInteger>(ref readonly BigDecimal value, byte checkType, out TOther result) 
 			where TOther : INumberBase<TOther> 
 			where TInteger : INumberBase<TInteger>, IMinMaxValue<TInteger>
