@@ -37,8 +37,7 @@ namespace Star3D.Maths.Numbers {
 		IUnaryPlusOperators<BigDecimal, BigDecimal>,
 		IUnaryNegationOperators<BigDecimal, BigDecimal>,
 		IModulusOperators<BigDecimal, BigDecimal, BigDecimal>,
-		IComparisonOperators<BigDecimal, BigDecimal, bool> 
-	{
+		IComparisonOperators<BigDecimal, BigDecimal, bool> {
 
 		/// <summary>
 		/// The maximum precision of division operations, measured as 10^DIVISION_PRECISION. 
@@ -458,7 +457,7 @@ namespace Star3D.Maths.Numbers {
 			if (realExponent < 0) {
 				expoValue = One / expoValue;
 			}
-			
+
 			BigDecimal fraction = 0;
 			for (int i = 22; i >= 0; i--) {
 				byte bit = (byte)((long)(mantissa >> i) & 1);
@@ -1447,7 +1446,8 @@ namespace Star3D.Maths.Numbers {
 				result = (TOther)(object)(decimal)value;
 				return true;
 			}
-			return TOther.TryConvertFromChecked(value, out result!);
+			result = default!;
+			return false;
 		}
 
 		/// <inheritdoc/>
@@ -1500,7 +1500,8 @@ namespace Star3D.Maths.Numbers {
 				result = (TOther)(object)(decimal)value;
 				return true;
 			}
-			return TOther.TryConvertFromSaturating(value, out result!);
+			result = default!;
+			return false;
 		}
 
 		/// <inheritdoc/>
@@ -1553,11 +1554,12 @@ namespace Star3D.Maths.Numbers {
 				result = (TOther)(object)(decimal)value;
 				return true;
 			}
-			return TOther.TryConvertFromTruncating(value, out result!);
+			result = default!;
+			return false;
 		}
 
-		private static bool IntCast<TOther, TInteger, TBigInteger>(ref readonly BigDecimal value, byte checkType, out TOther result) 
-			where TOther : INumberBase<TOther> 
+		private static bool IntCast<TOther, TInteger, TBigInteger>(ref readonly BigDecimal value, byte checkType, out TOther result)
+			where TOther : INumberBase<TOther>
 			where TInteger : INumberBase<TInteger>, IMinMaxValue<TInteger>
 			where TBigInteger : INumberBase<TBigInteger> // Must always be BigInteger
 		{
