@@ -9,6 +9,10 @@ namespace BigDecimalTester {
 			Console.WriteLine("                System Decimal: " + value);
 			Console.ForegroundColor = ConsoleColor.DarkGreen;
 			Console.WriteLine("                   Exact Value: " + test.ToStringDetailed());
+			Console.ForegroundColor = ConsoleColor.White;
+			Console.WriteLine("             Format: xRy (15R): " + test.ToString("15R"));
+			Console.WriteLine("              Format: xRy (R2): " + test.ToString("R2"));
+			Console.WriteLine("            Format: xRyT (7RT): " + test.ToString("7RT"));
 			Console.WriteLine();
 
 			Half value2 = (Half)0.4325f;

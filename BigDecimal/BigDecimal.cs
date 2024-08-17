@@ -1070,7 +1070,16 @@ namespace Star3D.Maths.Numbers {
 			return Parse(s.AsSpan(), style, provider);
 		}
 
-		/// <inheritdoc/>
+
+		/// <summary>
+		/// Format this string using <c>xRy(T)</c> as a format argument to get the full detail, where 
+		/// x is the number of decimal places at a minimum and y is the length of the string.
+		/// If x is omitted, it is 0. If y is omitted, it is infinite. Typically, y will be omitted.
+		/// If T is present (string literal), the string will be truncated if the decimal places is larger than the value of x.
+		/// </summary>
+		/// <param name="format"></param>
+		/// <param name="formatProvider"></param>
+		/// <returns></returns>
 		public static bool TryParse(ReadOnlySpan<char> s, NumberStyles style, IFormatProvider? provider, [MaybeNullWhen(false)] out BigDecimal result) {
 			string decimalPoint = style.HasFlag(NumberStyles.AllowCurrencySymbol) ? NumberFormatInfo.GetInstance(provider).CurrencyDecimalSeparator : NumberFormatInfo.GetInstance(provider).NumberDecimalSeparator;
 			int deci = s.IndexOf(decimalPoint);
@@ -1101,12 +1110,30 @@ namespace Star3D.Maths.Numbers {
 			return false;
 		}
 
-		/// <inheritdoc/>
+
+		/// <summary>
+		/// Format this string using <c>xRy(T)</c> as a format argument to get the full detail, where 
+		/// x is the number of decimal places at a minimum and y is the length of the string.
+		/// If x is omitted, it is 0. If y is omitted, it is infinite. Typically, y will be omitted.
+		/// If T is present (string literal), the string will be truncated if the decimal places is larger than the value of x.
+		/// </summary>
+		/// <param name="format"></param>
+		/// <param name="formatProvider"></param>
+		/// <returns></returns>
 		public static bool TryParse([NotNullWhen(true)] string? s, NumberStyles style, IFormatProvider? provider, [MaybeNullWhen(false)] out BigDecimal result) {
 			return TryParse(s.AsSpan(), style, provider, out result);
 		}
 
-		/// <inheritdoc/>
+
+		/// <summary>
+		/// Format this string using <c>xRy(T)</c> as a format argument to get the full detail, where 
+		/// x is the number of decimal places at a minimum and y is the length of the string.
+		/// If x is omitted, it is 0. If y is omitted, it is infinite. Typically, y will be omitted.
+		/// If T is present (string literal), the string will be truncated if the decimal places is larger than the value of x.
+		/// </summary>
+		/// <param name="format"></param>
+		/// <param name="formatProvider"></param>
+		/// <returns></returns>
 		public bool TryFormat(Span<char> destination, out int charsWritten, ReadOnlySpan<char> format, IFormatProvider? provider) {
 			string decimalPoint = NumberFormatInfo.GetInstance(provider).NumberDecimalSeparator ?? ".";
 
@@ -1118,6 +1145,12 @@ namespace Star3D.Maths.Numbers {
 					ReadOnlySpan<char> maxLengthS = format[substrings[1]];
 					int minDecs = 0;
 					int maxLength = -1;
+
+					bool noTruncate = true;
+					if (maxLengthS.Length > 0 && maxLengthS[^1] == 'T') {
+						maxLengthS = maxLengthS[..(maxLengthS.Length - 1)];
+						noTruncate = false;
+					}
 					if (enforceDecsS.Length > 0 && !int.TryParse(enforceDecsS, out minDecs)) {
 						charsWritten = 0;
 						return false;
@@ -1126,7 +1159,7 @@ namespace Star3D.Maths.Numbers {
 						charsWritten = 0;
 						return false;
 					}
-					string result = ToStringDetailed(minDecs, int.Min(destination.Length, maxLength), decimalPoint);
+					string result = ToStringDetailed(minDecs, int.Min(destination.Length, maxLength), decimalPoint, noTruncate);
 					charsWritten = result.Length;
 					result.CopyTo(destination);
 					return true;
@@ -1144,14 +1177,15 @@ namespace Star3D.Maths.Numbers {
 		}
 
 		/// <summary>
-		/// Format this string using <c>xRy</c> as a format argument to get the full detail, where 
+		/// Format this string using <c>xRy(T)</c> as a format argument to get the full detail, where 
 		/// x is the number of decimal places at a minimum and y is the length of the string.
-		/// If x is omitted, it is 0. If y is omitted, it is infinite.
+		/// If x is omitted, it is 0. If y is omitted, it is infinite. Typically, y will be omitted.
+		/// If T is present (string literal), the string will be truncated if the decimal places is larger than the value of x.
 		/// </summary>
 		/// <param name="format"></param>
 		/// <param name="formatProvider"></param>
 		/// <returns></returns>
-		public readonly string ToString(string? format, IFormatProvider? formatProvider) {
+		public readonly string ToString(string? format, IFormatProvider? formatProvider = null) {
 			const string MESSAGE = "Expecting format string to be null, or in the form of xRy where x is the number of decimal places at a minimum, and y is the maximum string length, both of which may be omitted. The R tag will instruct it to use full detail. A null format option will export as scientific notation.";
 			string decimalPoint = NumberFormatInfo.GetInstance(formatProvider).NumberDecimalSeparator ?? ".";
 
@@ -1160,6 +1194,11 @@ namespace Star3D.Maths.Numbers {
 				if (split.Length == 2) {
 					string enforceDecsS = split[0];
 					string maxLengthS = split[1];
+					bool noTruncate = true;
+					if (maxLengthS.Length > 0 && maxLengthS[^1] == 'T') {
+						maxLengthS = maxLengthS[..(maxLengthS.Length - 1)];
+						noTruncate = false;
+					}
 					int minDecs = 0;
 					int maxLength = -1;
 					if (enforceDecsS.Length > 0 && !int.TryParse(enforceDecsS, out minDecs)) {
@@ -1168,7 +1207,7 @@ namespace Star3D.Maths.Numbers {
 					if (maxLengthS.Length > 0 && !int.TryParse(maxLengthS, out maxLength)) {
 						throw new FormatException(MESSAGE);
 					}
-					return ToStringDetailed(minDecs, maxLength, decimalPoint);
+					return ToStringDetailed(minDecs, maxLength, decimalPoint, noTruncate);
 				} else {
 					throw new FormatException(MESSAGE);
 				}
