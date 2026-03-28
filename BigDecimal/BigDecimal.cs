@@ -8,45 +8,58 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
+using System.Diagnostics.Contracts;
+
+using NoDiscard = System.Diagnostics.Contracts.PureAttribute;
 
 namespace Star3D.Maths.Numbers {
 
 	/// <summary>
-	/// Represents a decimal value with arbitrary position. This can be used for near-perfect
-	/// accuracy computations.
+	/// <admonition type="danger">
+	/// <strong>Extremely slow type!</strong>
+	/// This type uses excessive and often unnecessary precision in its computations, which can make it several hundreds of times slower
+	/// than native system numeric types like <see cref="double"/>.<br/><br/>
+	/// <see cref="BigDecimal"/>'s primary use case is in computing values from the physical constants of the universe, which are regularly
+	/// extremely large or small, well beyond the precision limits of <see cref="double"/>.
+	/// </admonition>
 	/// <para/>
-	/// <strong>DANGER:</strong> This type is <strong>extremely slow compared to ordinary numeric types</strong>. Handle with care.
+	/// Represents a decimal value with arbitrary position. This can be used for near-perfect accuracy computations.
 	/// <para/>
-	/// Originally written by <c>Jan Christoph Bernack</c> for the public domain, and upgraded
-	/// by Xan for more specific usage in Starlike3D.
+	/// Originally written by <em>Jan Christoph Bernack</em> for the public domain, and then heavily modified for use in The Conservatory 
+	/// including the implementation of algebraic operations.
 	/// </summary>
+	// [SecurityDeny(Capability.Patching)]
 	public struct BigDecimal :
 		INumber<BigDecimal>,
-		IAdditionOperators<BigDecimal, BigDecimal, BigDecimal>,
-		IAdditiveIdentity<BigDecimal, BigDecimal>,
-		IIncrementOperators<BigDecimal>,
-		IDecrementOperators<BigDecimal>,
-		IDivisionOperators<BigDecimal, BigDecimal, BigDecimal>,
+		IPowerFunctions<BigDecimal>,
 		IEquatable<BigDecimal>,
 		IComparable,
-		IComparable<BigDecimal>,
-		IEqualityOperators<BigDecimal, BigDecimal, bool>,
-		IMultiplicativeIdentity<BigDecimal, BigDecimal>,
-		IMultiplyOperators<BigDecimal, BigDecimal, BigDecimal>,
-		ISubtractionOperators<BigDecimal, BigDecimal, BigDecimal>,
-		IUnaryPlusOperators<BigDecimal, BigDecimal>,
-		IUnaryNegationOperators<BigDecimal, BigDecimal>,
-		IModulusOperators<BigDecimal, BigDecimal, BigDecimal>,
-		IComparisonOperators<BigDecimal, BigDecimal, bool> {
+		IComparable<BigDecimal> {
 
 		/// <summary>
-		/// The maximum precision of division operations, measured as 10^DIVISION_PRECISION. 
+		/// The maximum precision of division operations, measured as 10^<see cref="DIVISION_PRECISION"/>. 
+		/// (that is, <see cref="DIVISION_PRECISION"/> decimal places).
 		/// This protects against irrational numbers being infinitely long.
 		/// </summary>
-		public const int DIVISION_PRECISION = 80;
+		public static readonly int DIVISION_PRECISION = 100;
+
+		/// <summary>
+		/// The same as <see cref="DIVISION_PRECISION"/>, but with higher accuracy, used in some intermediary calculations.
+		/// </summary>
+		public static readonly int HIGH_DIVISION_PRECISION = 200;
+
+		/// <summary>
+		/// The typical value used for parameters which limit iterative functions.
+		/// </summary>
+		public const uint STANDARD_MAX_ITERATIONS = 2000;
 
 		/// <inheritdoc/>
 		public static BigDecimal One { get; } = new BigDecimal(1, 0);
+
+		/// <summary>
+		/// Gets the value <c>0.5</c> for the type.
+		/// </summary>
+		public static BigDecimal OneHalf { get; } = new BigDecimal(5, -1);
 
 		/// <inheritdoc/>
 		public static int Radix { get; } = 10;
@@ -55,7 +68,7 @@ namespace Star3D.Maths.Numbers {
 		public static BigDecimal Zero { get; } = default;
 
 		/// <summary>
-		/// The mathematical constant <see langword="e"/>, computed up to <c>50!</c> (50 iterations).
+		/// The mathematical constant <see langword="e"/>, computed up to 100 iterations.
 		/// </summary>
 		public static BigDecimal E { get; }
 
@@ -63,6 +76,11 @@ namespace Star3D.Maths.Numbers {
 		/// The mathematical constant <see langword="pi"/>, computed up to 100 decimal places.
 		/// </summary>
 		public static BigDecimal Pi { get; }
+
+		/// <summary>
+		/// The inverse of the mathematical constant <see langword="pi"/>: <see langword="1/pi"/>.
+		/// </summary>
+		public static BigDecimal InversePi { get; }
 
 		/// <summary>
 		/// The mathematical constant <see langword="tau"/>, equal to <see langword="pi"/> times two.
@@ -114,6 +132,10 @@ namespace Star3D.Maths.Numbers {
 		/// </summary>
 		public static BigDecimal DoubleEpsilonValue { get; }
 
+		/// <summary>
+		/// The epsilon from division, or the smallest achievable value via division, as determined by <see cref="DIVISION_PRECISION"/>.
+		/// </summary>
+		public static BigDecimal DivisionEpsilon { get; } = new BigDecimal(1, -DIVISION_PRECISION);
 
 		/// <inheritdoc/>
 		public static BigDecimal AdditiveIdentity => Zero;
@@ -125,6 +147,21 @@ namespace Star3D.Maths.Numbers {
 		/// The value representing -1.
 		/// </summary>
 		public static BigDecimal NegativeOne { get; } = new BigDecimal(-1, 0);
+
+		/// <summary>
+		/// The cached result of ln(2).
+		/// </summary>
+		public static BigDecimal Ln2 { get; }
+
+		/// <summary>
+		/// The cached result of ln(10).
+		/// </summary>
+		public static BigDecimal Ln10 { get; }
+
+		/// <summary>
+		/// The cached result of ln(100).
+		/// </summary>
+		public static BigDecimal Ln100 { get; }
 
 		/// <summary>
 		/// The mantissa of the scientific notation of this value. This is the whole number component.
@@ -185,11 +222,12 @@ namespace Star3D.Maths.Numbers {
 		}
 
 		/// <summary>
-		/// Separates the whole number from its decimal part. XPointY(7, 125) would be 7.125
+		/// Separates the whole number from its decimal part. XPointY(7, 125) would be 7.125.
 		/// </summary>
 		/// <param name="x"></param>
 		/// <param name="y"></param>
 		/// <returns></returns>
+		[NoDiscard]
 		public static BigDecimal XPointY(BigInteger x, BigInteger y) {
 			int nDigits = NumberOfDigits(y);
 			BigDecimal frac = new BigDecimal(y, -nDigits);
@@ -197,12 +235,15 @@ namespace Star3D.Maths.Numbers {
 		}
 
 		/// <summary>
-		/// Separates the whole number from its decimal part. XPointY(7, 125) would be 7.125
+		/// Separates the whole number from its decimal part. XPointY(7, 125) would be 7.125.
+		/// The exponent is a factor of 10, allowing this to be used for scientific notation.
+		/// <c><paramref name="x"/>.<paramref name="y"/>*(10^<paramref name="exponent"/>)</c>
 		/// </summary>
 		/// <param name="x"></param>
 		/// <param name="y"></param>
 		/// <param name="exponent"></param>
 		/// <returns></returns>
+		[NoDiscard]
 		public static BigDecimal XPointY(BigInteger x, BigInteger y, int exponent = 0) {
 			int nDigits = NumberOfDigits(y);
 			BigDecimal frac = new BigDecimal(y, -nDigits);
@@ -212,9 +253,43 @@ namespace Star3D.Maths.Numbers {
 		}
 
 		/// <summary>
+		/// Separates the whole number from its decimal part. NegativeXPointY(7, 125) would be -7.125.
+		/// This is typically useful for -0.y
+		/// </summary>
+		/// <param name="x"></param>
+		/// <param name="y"></param>
+		/// <returns></returns>
+		[NoDiscard]
+		public static BigDecimal NegativeXPointY(BigInteger x, BigInteger y) {
+			int nDigits = NumberOfDigits(y);
+			BigDecimal frac = new BigDecimal(y, -nDigits);
+			return -(x + frac);
+		}
+
+		/// <summary>
+		/// Separates the whole number from its decimal part. XPointY(7, 125) would be -7.125.
+		/// The exponent is a factor of 10, allowing this to be used for scientific notation.
+		/// <c><paramref name="x"/>.<paramref name="y"/>*(10^<paramref name="exponent"/>)</c>
+		/// This is typically useful for -0.y
+		/// </summary>
+		/// <param name="x"></param>
+		/// <param name="y"></param>
+		/// <param name="exponent"></param>
+		/// <returns></returns>
+		[NoDiscard]
+		public static BigDecimal NegativeXPointY(BigInteger x, BigInteger y, int exponent = 0) {
+			int nDigits = NumberOfDigits(y);
+			BigDecimal frac = new BigDecimal(y, -nDigits);
+			BigDecimal result = x + frac;
+			result.Exponent += exponent;
+			return -result;
+		}
+
+		/// <summary>
 		/// Removes trailing zeros on the mantissa of this instance.
 		/// </summary>
 		[DebuggerStepThrough]
+		[NoDiscard]
 		public void NormalizeSelf() {
 			if (Mantissa.IsZero) {
 				Exponent = 0;
@@ -235,27 +310,37 @@ namespace Star3D.Maths.Numbers {
 		/// </summary>
 		/// <returns>The truncated number</returns>
 		[DebuggerStepThrough]
+		[NoDiscard]
 		public static BigDecimal Truncate(BigDecimal value, int precision) {
-			// Self-reminder that structs are copied by value, so <value> here is a new instance because it is not an in parameter
+			// Self-reminder that structs are copied by value, so <value> here is a new instance because it is not a ref parameter
 			value.TruncateSelf(precision);
 			return value;
 		}
 
 		/// <summary>
-		/// Truncate this value
+		/// Truncate this value. This mutates the struct!
 		/// </summary>
 		/// <param name="precision"></param>
 		/// <returns></returns>
+		[NoDiscard]
 		private void TruncateSelf(int precision) {
 			// save some time because the number of digits is not needed to remove trailing zeros
 			NormalizeSelf();
 			// remove the least significant digits, as long as the number of digits is higher than the given Precision
-			while (NumberOfDigits(Mantissa) > precision) {
-				Mantissa /= 10;
-				Exponent++;
+			int digitCount = NumberOfDigits(Mantissa);
+			int difference = digitCount - precision;
+
+			bool skipNormalization = true;
+			while (digitCount > precision) {
+				skipNormalization = false;
+				Mantissa /= BigInteger.Pow(10, difference);
+				Exponent += difference;
+				digitCount = NumberOfDigits(Mantissa);
 			}
 			// normalize again to make sure there are no trailing zeros left
-			NormalizeSelf();
+			if (!skipNormalization) {
+				NormalizeSelf();
+			}
 		}
 
 		/// <summary>
@@ -264,6 +349,7 @@ namespace Star3D.Maths.Numbers {
 		/// </summary>
 		/// <returns>The truncated number</returns>
 		[DebuggerStepThrough]
+		[NoDiscard]
 		public static BigDecimal TruncateToPlaces(BigDecimal value, int decimalDigits) {
 			return Truncate(value, NumberOfDigits(value.Mantissa) + value.Exponent + decimalDigits);
 		}
@@ -273,6 +359,7 @@ namespace Star3D.Maths.Numbers {
 		/// </summary>
 		/// <returns></returns>
 		[DebuggerStepThrough]
+		[NoDiscard]
 		public static BigDecimal Truncate(BigDecimal value) {
 			return Truncate(value, DIVISION_PRECISION);
 		}
@@ -282,6 +369,7 @@ namespace Star3D.Maths.Numbers {
 		/// </summary>
 		/// <returns></returns>
 		[DebuggerStepThrough]
+		[NoDiscard]
 		public static BigDecimal Floor(BigDecimal value) {
 			return Truncate(value, NumberOfDigits(value.Mantissa) + value.Exponent);
 		}
@@ -291,6 +379,7 @@ namespace Star3D.Maths.Numbers {
 		/// </summary>
 		/// <returns></returns>
 		[DebuggerStepThrough]
+		[NoDiscard]
 		public static BigInteger FloorToInt(BigDecimal value) {
 			return Truncate(value, NumberOfDigits(value.Mantissa) + value.Exponent).Mantissa;
 		}
@@ -300,6 +389,7 @@ namespace Star3D.Maths.Numbers {
 		/// </summary>
 		/// <returns></returns>
 		[DebuggerStepThrough]
+		[NoDiscard]
 		public static BigDecimal Ceil(BigDecimal value) {
 			BigDecimal ofst = value < 0 ? -1 : 1;
 			return Floor(value + ofst);
@@ -310,6 +400,7 @@ namespace Star3D.Maths.Numbers {
 		/// </summary>
 		/// <param name="value"></param>
 		/// <returns></returns>
+		[NoDiscard]
 		public static BigDecimal Round(BigDecimal value) {
 			bool n = value < 0;
 			BigDecimal abs = Abs(value);
@@ -330,13 +421,13 @@ namespace Star3D.Maths.Numbers {
 		/// <param name="value"></param>
 		/// <returns></returns>
 		[DebuggerStepThrough]
+		[NoDiscard]
 		public static int NumberOfDigits(BigInteger value) {
 			// do not count the sign
 			//return (value * value.Sign).ToString().Length;
 			// faster version
 			return (int)Math.Ceiling(BigInteger.Log10(value * value.Sign));
 		}
-
 
 		#region Conversions
 
@@ -509,7 +600,6 @@ namespace Star3D.Maths.Numbers {
 
 		/// <inheritdoc/>
 		public static explicit operator decimal(BigDecimal value) {
-			// Returns a binary representation of a Decimal. The return value is an
 			// integer array with four elements. Elements 0, 1, and 2 contain the low,
 			// middle, and high 32 bits of the 96-bit integer part of the Decimal.
 			// Element 3 contains the scale factor and sign of the Decimal: bits 0-15
@@ -536,7 +626,7 @@ namespace Star3D.Maths.Numbers {
 			if (value > DoubleMaxValue) return double.PositiveInfinity;
 			if (value < DoubleMinValue) return double.NegativeInfinity;
 			if (Abs(value) < DoubleEpsilonValue) return 0.0D;
-			value = Truncate(value, 15);
+			value = Truncate(value, 17);
 			return (double)value.Mantissa * Math.Pow(10, value.Exponent);
 		}
 
@@ -551,13 +641,89 @@ namespace Star3D.Maths.Numbers {
 		}
 
 		/// <inheritdoc/>
+		public static explicit operator checked sbyte(BigDecimal value) {
+			return checked((sbyte)(long)value);
+		}
+
+		/// <inheritdoc/>
+		public static explicit operator checked byte(BigDecimal value) {
+			return checked((byte)(ulong)value);
+		}
+
+		/// <inheritdoc/>
+		public static explicit operator checked short(BigDecimal value) {
+			return checked((short)(long)value);
+		}
+
+		/// <inheritdoc/>
+		public static explicit operator checked ushort(BigDecimal value) {
+			return checked((ushort)(ulong)value);
+		}
+
+		/// <inheritdoc/>
+		public static explicit operator checked int(BigDecimal value) {
+			return checked((int)(long)value);
+		}
+
+		/// <inheritdoc/>
+		public static explicit operator checked uint(BigDecimal value) {
+			return checked((uint)(ulong)value);
+		}
+
+		/// <inheritdoc/>
+		public static explicit operator checked long(BigDecimal value) {
+			return checked((long)(value.Mantissa * BigInteger.Pow(10, value.Exponent)));
+		}
+
+		/// <inheritdoc/>
+		public static explicit operator checked ulong(BigDecimal value) {
+			return checked((ulong)(value.Mantissa * BigInteger.Pow(10, value.Exponent)));
+		}
+
+
+		/// <inheritdoc/>
+		public static explicit operator sbyte(BigDecimal value) {
+			return unchecked((sbyte)(long)value);
+		}
+
+		/// <inheritdoc/>
+		public static explicit operator byte(BigDecimal value) {
+			return unchecked((byte)(ulong)value);
+		}
+
+		/// <inheritdoc/>
+		public static explicit operator short(BigDecimal value) {
+			return unchecked((short)(long)value);
+		}
+
+		/// <inheritdoc/>
+		public static explicit operator ushort(BigDecimal value) {
+			return unchecked((ushort)(ulong)value);
+		}
+
+		/// <inheritdoc/>
 		public static explicit operator int(BigDecimal value) {
-			return (int)(value.Mantissa * BigInteger.Pow(10, value.Exponent));
+			return unchecked((int)(long)value);
 		}
 
 		/// <inheritdoc/>
 		public static explicit operator uint(BigDecimal value) {
-			return (uint)(value.Mantissa * BigInteger.Pow(10, value.Exponent));
+			return unchecked((uint)(ulong)value);
+		}
+
+		/// <inheritdoc/>
+		public static explicit operator long(BigDecimal value) {
+			return unchecked((long)(value.Mantissa * BigInteger.Pow(10, value.Exponent)));
+		}
+
+		/// <inheritdoc/>
+		public static explicit operator ulong(BigDecimal value) {
+			return unchecked((ulong)(value.Mantissa * BigInteger.Pow(10, value.Exponent)));
+		}
+
+		/// <inheritdoc/>
+		public static explicit operator BigInteger(BigDecimal value) {
+			return unchecked(value.Mantissa * BigInteger.Pow(10, value.Exponent));
 		}
 
 		#endregion
@@ -608,7 +774,24 @@ namespace Star3D.Maths.Numbers {
 
 		/// <inheritdoc/>
 		public static BigDecimal operator /(BigDecimal dividend, BigDecimal divisor) {
-			var exponentChange = DIVISION_PRECISION - (NumberOfDigits(dividend.Mantissa) - NumberOfDigits(divisor.Mantissa));
+			int exponentChange = DIVISION_PRECISION - (NumberOfDigits(dividend.Mantissa) - NumberOfDigits(divisor.Mantissa));
+			if (exponentChange < 0) {
+				exponentChange = 0;
+			}
+			dividend.Mantissa *= BigInteger.Pow(10, exponentChange);
+			return new BigDecimal(dividend.Mantissa / divisor.Mantissa, dividend.Exponent - divisor.Exponent - exponentChange);
+		}
+
+		/// <summary>
+		/// Divide, but override the value of <see cref="DIVISION_PRECISION"/>.
+		/// </summary>
+		/// <param name="dividend"></param>
+		/// <param name="divisor"></param>
+		/// <param name="divisionPrecision"></param>
+		/// <returns></returns>
+		public static BigDecimal DivideWithCustomPrecision(BigDecimal dividend, BigDecimal divisor, int divisionPrecision) {
+			ArgumentOutOfRangeException.ThrowIfNegativeOrZero(divisionPrecision);
+			int exponentChange = divisionPrecision - (NumberOfDigits(dividend.Mantissa) - NumberOfDigits(divisor.Mantissa));
 			if (exponentChange < 0) {
 				exponentChange = 0;
 			}
@@ -662,47 +845,253 @@ namespace Star3D.Maths.Numbers {
 		#endregion
 
 		#region Additional mathematical functions
+
 		/// <summary>
-		/// Raises <c>e</c> to the power of <paramref name="exponent"/>.
+		/// Raises <paramref name="base"/> to the power of <paramref name="exponent"/> where the exponent is a positive integer.
 		/// </summary>
+		/// <param name="base"></param>
 		/// <param name="exponent"></param>
 		/// <returns></returns>
-		public static BigDecimal Exp(double exponent) {
-			var tmp = (BigDecimal)1;
-			while (Math.Abs(exponent) > 100) {
-				var diff = exponent > 0 ? 100 : -100;
-				tmp *= Math.Exp(diff);
-				exponent -= diff;
+		public static BigDecimal IntPow(BigDecimal @base, BigInteger exponent) {
+			BigDecimal buf0;
+			BigDecimal buf1;
+			if (exponent == 0) {
+				return 1;
+			} else if (exponent == 1) {
+				return @base;
+
+			} else if (exponent == 2) {
+				return @base * @base;
+
+			} else if (exponent == 3) {
+				return @base * @base * @base;
+
+			} else if (exponent == 4) {
+				buf0 = @base * @base;
+				return buf0 * buf0;
+
+			} else if (exponent == 5) {
+				buf0 = @base * @base;
+				return buf0 * buf0 * @base;
+
+			} else if (exponent == 6) {
+				buf0 = @base * @base * @base;
+				return buf0 * buf0;
+
+			} else if (exponent == 7) {
+				buf0 = @base * @base * @base;
+				return buf0 * buf0 * @base;
+
+			} else if (exponent == 8) {
+				buf0 = @base * @base;
+				buf1 = buf0 * buf0;
+				return buf1 * buf1;
+
+			} else {
+				BigDecimal result = 1;
+				BigInteger eight = 8;
+				while (exponent > eight) {
+					// Use the largest available unit so that more multiplications can be done in less operations.
+					result *= IntPow(@base, eight);
+					exponent -= eight;
+				}
+				return result * IntPow(@base, exponent);
 			}
-			return tmp * Math.Exp(exponent);
 		}
 
 		/// <summary>
-		/// Raises <paramref name="basis"/> to the power of <paramref name="exponent"/> as a <see cref="BigDecimal"/>.
+		/// Raises <paramref name="base"/> to the power of <paramref name="exponent"/> where the exponent is a positive integer.
 		/// </summary>
-		/// <param name="basis"></param>
+		/// <param name="base"></param>
 		/// <param name="exponent"></param>
 		/// <returns></returns>
-		public static BigDecimal Pow(double basis, double exponent) {
-			var tmp = (BigDecimal)1;
-			while (Math.Abs(exponent) > 100) {
-				var diff = exponent > 0 ? 100 : -100;
-				tmp *= Math.Pow(basis, diff);
-				exponent -= diff;
+		public static BigDecimal IntPow(BigDecimal @base, ulong exponent) {
+			BigDecimal buf0;
+			BigDecimal buf1;
+			if (exponent == 0) {
+				return 1;
+			} else if (exponent == 1) {
+				return @base;
+
+			} else if (exponent == 2) {
+				return @base * @base;
+
+			} else if (exponent == 3) {
+				return @base * @base * @base;
+
+			} else if (exponent == 4) {
+				buf0 = @base * @base;
+				return buf0 * buf0;
+
+			} else if (exponent == 5) {
+				buf0 = @base * @base;
+				return buf0 * buf0 * @base;
+
+			} else if (exponent == 6) {
+				buf0 = @base * @base * @base;
+				return buf0 * buf0;
+
+			} else if (exponent == 7) {
+				buf0 = @base * @base * @base;
+				return buf0 * buf0 * @base;
+
+			} else if (exponent == 8) {
+				buf0 = @base * @base;
+				buf1 = buf0 * buf0;
+				return buf1 * buf1;
+
+			} else {
+				BigDecimal result = 1;
+				while (exponent > 8UL) {
+					// Use the largest available unit so that more multiplications can be done in less operations.
+					result *= IntPow(@base, 8UL);
+					exponent -= 8UL;
+				}
+				return result * IntPow(@base, exponent);
 			}
-			return tmp * Math.Pow(basis, exponent);
+		}
+
+		/// <summary>
+		/// Raises <c>e</c> to the power of <paramref name="exponent"/> using a taylor series of the
+		/// provided amount of iterations. More iterations yields more accurate results, at the expense of time.
+		/// </summary>
+		/// <param name="exponent">The exponent that <c>e</c> is being raised by.</param>
+		/// <param name="maxIterations">The amount of iterations to perform. More iterations increases accuracy.</param>
+		/// <returns></returns>
+		[NoDiscard]
+		public static BigDecimal ApproximateExp(BigDecimal exponent, uint maxIterations = STANDARD_MAX_ITERATIONS) {
+			ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxIterations);
+			// scout_insanity.mp4
+			BigDecimal numerator = One;
+			BigDecimal denominator = One;
+			BigDecimal result = One;
+			BigDecimal lastResult = One;
+			exponent.TruncateSelf(HIGH_DIVISION_PRECISION);
+			for (uint k = 1; k <= maxIterations; k++) {
+				numerator *= exponent;
+				denominator *= k;
+				result += numerator / denominator;
+
+				numerator.TruncateSelf(HIGH_DIVISION_PRECISION);
+				denominator.TruncateSelf(HIGH_DIVISION_PRECISION);
+				result.TruncateSelf(HIGH_DIVISION_PRECISION);
+				if (result == lastResult) {
+					break;
+				}
+				lastResult = result;
+			}
+			return result;
+		}
+
+		/// <summary>
+		/// Raises <paramref name="base"/> to the power of <paramref name="exponent"/> as a <see cref="BigDecimal"/>.
+		/// <para/>
+		/// If the exponent is an integer, this will automatically swap to <see cref="IntPow(BigDecimal, BigInteger)"/>.
+		/// </summary>
+		/// <param name="base">The base number to exponentiate.</param>
+		/// <param name="exponent">The exponent to raise by.</param>
+		/// <param name="maxIterations">Only used if the exponent or base is not an integer. See <see cref="ApproximateNaturalLog(BigDecimal, uint)"/></param>
+		/// <returns></returns>
+		[NoDiscard]
+		public static BigDecimal ApproximatePow(BigDecimal @base, BigDecimal exponent, uint maxIterations = STANDARD_MAX_ITERATIONS) {
+			ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxIterations);
+			@base.TruncateSelf(HIGH_DIVISION_PRECISION);
+			exponent.TruncateSelf(HIGH_DIVISION_PRECISION);
+			if (IsInteger(exponent)) {
+				BigDecimal power = IntPow(@base, (ulong)Abs(exponent));
+				if (IsPositive(exponent)) {
+					return power;
+				} else {
+					return One / power;
+				}
+			}
+			// exp(ln(x)) = x
+			// exp(ln(base^exponent))=base^exponent, THUS...
+			// ln(base^exponent) is exponent*ln(base), SO...
+			// result=exp(exponent*ln(base))
+			BigDecimal ln = ApproximateNaturalLog(@base, maxIterations);
+			exponent *= ln;
+			return ApproximateExp(exponent);
+		}
+
+
+		/// <inheritdoc cref="ApproximatePow(BigDecimal, BigDecimal, uint, uint, int)"/>
+		static BigDecimal IPowerFunctions<BigDecimal>.Pow(BigDecimal x, BigDecimal y) => ApproximatePow(x, y);
+
+		/// <summary>
+		/// Computes ln(x) based on a fast-converging algorithm.
+		/// </summary>
+		/// <param name="x"></param>
+		/// <param name="iterations">The amount of times to expand the square root out.</param>
+		/// <returns></returns>
+		[NoDiscard]
+		public static BigDecimal ApproximateNaturalLog(BigDecimal x, uint iterations = STANDARD_MAX_ITERATIONS) {
+			ArgumentOutOfRangeException.ThrowIfNegative(x);
+			if (IsZero(x)) return Zero; // ln 1 = 0
+			if (x == E) return One;     // ln e = 1
+
+			// This function converges very rapidly, but only when 0.02<=x<=1.5 (or so) (x is the original, not adjusted --)
+			int originalExponent = x.Exponent;
+			if (x > new BigDecimal(15, -1)) {
+				int digitCount = NumberOfDigits(x.Mantissa);
+				x.Exponent = -digitCount;
+			} else if (x < new BigDecimal(5, -2)) {
+				x.Exponent++;
+			}
+
+			x--;
+			x.TruncateSelf(HIGH_DIVISION_PRECISION);
+			BigDecimal xExpo = x;
+			BigDecimal result = x;
+			BigDecimal lastResult = x;
+			BigDecimal den = One;
+
+			xExpo *= x;
+			den++;
+			result -= xExpo / den;
+			for (uint i = 0; i < iterations; i++) {
+				xExpo *= x;
+				den++;
+				result += xExpo / den;
+				
+				xExpo *= x;
+				den++;
+				result -= xExpo / den;
+
+				result.TruncateSelf(HIGH_DIVISION_PRECISION);
+				xExpo.TruncateSelf(HIGH_DIVISION_PRECISION);
+				if (result == lastResult) {
+					break;
+				}
+				lastResult = result;
+			}
+
+			while (originalExponent < x.Exponent) {
+				originalExponent++;
+				result -= Ln10;
+			}
+
+			while (originalExponent > x.Exponent) {
+				originalExponent--;
+				result += Ln10;
+			}
+
+			return result;
 		}
 
 		/// <summary>
 		/// Returns <c>n!</c>
+		/// <para/>
+		/// <strong>Do not use this in a loop! Instead, keep track of the value yourself otherwise you waste a lot of iterations repeating math you have already done.</strong>
 		/// </summary>
 		/// <param name="n"></param>
 		/// <returns></returns>
+		[NoDiscard]
 		public static BigInteger Factorial(BigInteger n) {
 			ArgumentOutOfRangeException.ThrowIfNegative(n);
 			if (n == 0) return 1;
 			BigInteger c = n - 1;
-			while (c > 1) {
+			while (c > One) {
 				n *= c--;
 			}
 			return n;
@@ -714,12 +1103,13 @@ namespace Star3D.Maths.Numbers {
 		/// <param name="x"></param>
 		/// <param name="n"></param>
 		/// <returns></returns>
+		[NoDiscard]
 		public static BigDecimal FallingFactorial(BigDecimal x, BigInteger n) {
 			ArgumentOutOfRangeException.ThrowIfNegative(n);
 			BigDecimal xOrg = x;
 			BigDecimal result = x;
-			BigDecimal nIdx = 1;
-			while (n > 1) {
+			BigDecimal nIdx = One;
+			while (n > One) {
 				result *= xOrg - nIdx;
 				n--;
 				nIdx++;
@@ -732,9 +1122,11 @@ namespace Star3D.Maths.Numbers {
 		/// </summary>
 		/// <param name="value"></param>
 		/// <returns></returns>
+		[NoDiscard]
 		public static BigDecimal Abs(BigDecimal value) {
-			if (value < 0) return value * -1;
-			return value;
+			return value with {
+				Mantissa = BigInteger.Abs(value.Mantissa)
+			};
 		}
 
 		/// <summary>
@@ -742,28 +1134,32 @@ namespace Star3D.Maths.Numbers {
 		/// </summary>
 		/// <param name="value">The value to get the square root of.</param>
 		/// <param name="maxIterations">The amount of iterations done to approach the result.</param>
-		/// <param name="errorMargin">The tested square can be within this amount of <paramref name="value"/> to return early.</param>
 		/// <returns></returns>
-		/// <exception cref="NotSupportedException"></exception>
-		public static BigDecimal ApproximateSqrt(BigDecimal value, uint maxIterations = 1000, BigDecimal errorMargin = default) {
+		/// <exception cref="NotSupportedException">If the input would result in a complex number (negative).</exception>
+		/// <exception cref="ArgumentOutOfRangeException"></exception>
+		[NoDiscard]
+		public static BigDecimal ApproximateSqrt(BigDecimal value, uint maxIterations = STANDARD_MAX_ITERATIONS) {
 			if (value < 0) throw new NotSupportedException("Imaginary numbers are not supported.");
 			ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxIterations);
-			ArgumentOutOfRangeException.ThrowIfNegative(errorMargin);
+
 			BigDecimal leastI;
 			BigDecimal mostI;
 
 			bool invert = false;
-			if (value < 1) {
+			if (value < One) {
 				invert = true;
-				value = 1 / value;
+				value = One / value;
 			}
+			value.TruncateSelf(HIGH_DIVISION_PRECISION);
 
 			// Some quick checks:
 			BigDecimal startingI = 2;
-			BigDecimal lastStartingI = 1;
-			BigDecimal lastStartingI2 = 1;
+			BigDecimal lastStartingI = One;
+			BigDecimal lastStartingI2 = One;
 			do {
 				BigDecimal test = startingI * startingI;
+				test.TruncateSelf(HIGH_DIVISION_PRECISION);
+
 				mostI = startingI;
 				if (test < value) {
 					startingI = test;
@@ -777,27 +1173,48 @@ namespace Star3D.Maths.Numbers {
 
 			BigDecimal mag;
 			BigDecimal halfMag;
+			BigDecimal oneQuarter = new BigDecimal(25, -2);
+			BigDecimal threeQuarters = new BigDecimal(75, -2);
+			BigDecimal lastSqr = default;
 			for (uint i = 0; i < maxIterations; i++) {
 				mag = mostI - leastI;
 				if (mag == 0) break; // Exact match?
 
-				halfMag = mag / 2;
+				halfMag = mag * OneHalf;
+
 				BigDecimal ofst = leastI + halfMag;
+				ofst.TruncateSelf(HIGH_DIVISION_PRECISION);
+
 				BigDecimal sqr = ofst * ofst;
-				if (sqr < value) {
+				sqr.TruncateSelf(HIGH_DIVISION_PRECISION);
+				if (sqr == value || sqr == lastSqr) {
+					break;
+				} else if (sqr < value) {
 					// Undershot
-					leastI += halfMag;
+					if (sqr < value * oneQuarter) {
+						// *really* undershot
+						leastI += mag * threeQuarters;
+					} else {
+						leastI += halfMag;
+					}
 				} else if (sqr > value) {
 					// Overshot
-					mostI -= halfMag;
-				} else if (sqr == value || (errorMargin != 0 && Abs(sqr - value) < errorMargin)) {
-					break;
+					if (sqr > value * 4) {
+						// *really* overshot
+						mostI -= mag * threeQuarters;
+					} else {
+						mostI -= halfMag;
+					}
 				}
+				lastSqr = sqr;
+				leastI.TruncateSelf(HIGH_DIVISION_PRECISION);
+				mostI.TruncateSelf(HIGH_DIVISION_PRECISION);
 			}
 			mag = mostI - leastI;
-			halfMag = mag / 2;
+			halfMag = mag * OneHalf;
 			BigDecimal result = leastI + halfMag;
-			if (invert) result = 1 / result;
+			if (invert) result = One / result;
+			result.TruncateSelf(HIGH_DIVISION_PRECISION);
 			return result;
 		}
 
@@ -811,6 +1228,7 @@ namespace Star3D.Maths.Numbers {
 		/// <param name="decimal">The character to use for decimals.</param>
 		/// <param name="noTruncate">If true, <paramref name="enforceDecimalPlaces"/> will not truncate.</param>
 		/// <returns></returns>
+		[NoDiscard]
 		public readonly string ToStringDetailed(int enforceDecimalPlaces = 0, int maxStringLength = -1, string @decimal = ".", bool noTruncate = true) {
 			ArgumentOutOfRangeException.ThrowIfNegative(enforceDecimalPlaces);
 			bool isNegative = false;
@@ -874,6 +1292,7 @@ namespace Star3D.Maths.Numbers {
 		/// Returns the value as scientific notation Mantissa E Exponent
 		/// </summary>
 		/// <returns></returns>
+		[NoDiscard]
 		public readonly string ToStringScientific() {
 			return string.Concat(Mantissa.ToString(), "E", Exponent);
 		}
@@ -885,21 +1304,25 @@ namespace Star3D.Maths.Numbers {
 		public override readonly string ToString() => ToStringScientific();
 
 		/// <inheritdoc/>
+		[NoDiscard]
 		public readonly bool Equals(BigDecimal other) {
 			return other.Mantissa.Equals(Mantissa) && other.Exponent == Exponent;
 		}
 
 		/// <inheritdoc/>
+		[NoDiscard]
 		readonly bool IEquatable<BigDecimal>.Equals(BigDecimal other) {
 			return other.Mantissa.Equals(Mantissa) && other.Exponent == Exponent;
 		}
 
 		/// <inheritdoc/>
+		[NoDiscard]
 		public readonly override bool Equals(object? obj) {
 			return obj is BigDecimal bd && Equals(bd);
 		}
 
 		/// <inheritdoc/>
+		[NoDiscard]
 		public readonly override int GetHashCode() {
 			unchecked {
 				return Mantissa.GetHashCode() * 397 ^ Exponent;
@@ -907,6 +1330,7 @@ namespace Star3D.Maths.Numbers {
 		}
 
 		/// <inheritdoc/>
+		[NoDiscard]
 		public readonly int CompareTo(object? obj) {
 			if (obj is not BigDecimal) {
 				throw new ArgumentException("Invalid object type.", nameof(obj));
@@ -915,6 +1339,7 @@ namespace Star3D.Maths.Numbers {
 		}
 
 		/// <inheritdoc/>
+		[NoDiscard]
 		public readonly int CompareTo(BigDecimal other) {
 			return this < other ? -1 : this > other ? 1 : 0;
 		}
@@ -924,6 +1349,7 @@ namespace Star3D.Maths.Numbers {
 		/// </summary>
 		/// <param name="value"></param>
 		/// <returns></returns>
+		[NoDiscard]
 		public static BigDecimal Parse(string value) {
 			string decimalPoint = CultureInfo.CurrentCulture.NumberFormat.NumberDecimalSeparator;
 			int deci = value.IndexOf(decimalPoint);
@@ -948,69 +1374,87 @@ namespace Star3D.Maths.Numbers {
 		}
 
 		/// <inheritdoc/>
+		[NoDiscard]
 		public static bool IsCanonical(BigDecimal value) {
 			_ = BigInteger.DivRem(value.Mantissa, 10, out BigInteger remainder);
 			return remainder != 0;
 		}
 
 		/// <inheritdoc/>
+		[NoDiscard]
 		public static bool IsComplexNumber(BigDecimal value) => false;
 
 		/// <inheritdoc/>
+		[NoDiscard]
 		public static bool IsEvenInteger(BigDecimal value) {
 			if (value.Exponent != 0) return false;
 			return value.Mantissa.IsEven;
 		}
 
 		/// <inheritdoc/>
+		[NoDiscard]
 		public static bool IsFinite(BigDecimal value) => true;
 
 		/// <inheritdoc/>
+		[NoDiscard]
 		public static bool IsImaginaryNumber(BigDecimal value) => false;
 
 		/// <inheritdoc/>
+		[NoDiscard]
 		public static bool IsInfinity(BigDecimal value) => false;
 
 		/// <inheritdoc/>
+		[NoDiscard]
 		public static bool IsInteger(BigDecimal value) => value.Exponent == 0;
 
 		/// <inheritdoc/>
+		[NoDiscard]
 		public static bool IsNaN(BigDecimal value) => false;
 
 		/// <inheritdoc/>
+		[NoDiscard]
 		public static bool IsNegative(BigDecimal value) => BigInteger.IsNegative(value.Mantissa);
 
 		/// <inheritdoc/>
+		[NoDiscard]
 		public static bool IsNegativeInfinity(BigDecimal value) => false;
 
 		/// <inheritdoc/>
+		[NoDiscard]
 		public static bool IsNormal(BigDecimal value) {
 			_ = BigInteger.DivRem(value.Mantissa, 10, out BigInteger remainder);
 			return remainder != 0;
 		}
 
 		/// <inheritdoc/>
+		[NoDiscard]
 		public static bool IsOddInteger(BigDecimal value) {
 			if (value.Exponent != 0) return false;
 			return !value.Mantissa.IsEven;
 		}
 
 		/// <inheritdoc/>
+		[NoDiscard]
 		public static bool IsPositive(BigDecimal value) => BigInteger.IsPositive(value.Mantissa);
 
 		/// <inheritdoc/>
+		[NoDiscard]
 		public static bool IsPositiveInfinity(BigDecimal value) => false;
 
 		/// <inheritdoc/>
+		[NoDiscard]
 		public static bool IsRealNumber(BigDecimal value) => true;
 
 		/// <inheritdoc/>
+		[NoDiscard]
 		public static bool IsSubnormal(BigDecimal value) => value.Mantissa.IsZero;
 
 		/// <inheritdoc/>
+		[NoDiscard]
 		public static bool IsZero(BigDecimal value) => value.Mantissa.IsZero;
 
 		/// <inheritdoc/>
+		[NoDiscard]
 		public static BigDecimal MaxMagnitude(BigDecimal x, BigDecimal y) {
 			if (BigInteger.IsNegative(x.Mantissa)) x = Abs(x);
 			if (BigInteger.IsNegative(y.Mantissa)) y = Abs(y);
@@ -1019,6 +1463,7 @@ namespace Star3D.Maths.Numbers {
 		}
 
 		/// <inheritdoc/>
+		[NoDiscard]
 		public static BigDecimal MaxMagnitudeNumber(BigDecimal x, BigDecimal y) {
 			if (BigInteger.IsNegative(x.Mantissa)) x = Abs(x);
 			if (BigInteger.IsNegative(y.Mantissa)) y = Abs(y);
@@ -1027,6 +1472,7 @@ namespace Star3D.Maths.Numbers {
 		}
 
 		/// <inheritdoc/>
+		[NoDiscard]
 		public static BigDecimal MinMagnitude(BigDecimal x, BigDecimal y) {
 			if (BigInteger.IsNegative(x.Mantissa)) x = Abs(x);
 			if (BigInteger.IsNegative(y.Mantissa)) y = Abs(y);
@@ -1035,6 +1481,7 @@ namespace Star3D.Maths.Numbers {
 		}
 
 		/// <inheritdoc/>
+		[NoDiscard]
 		public static BigDecimal MinMagnitudeNumber(BigDecimal x, BigDecimal y) {
 			if (BigInteger.IsNegative(x.Mantissa)) x = Abs(x);
 			if (BigInteger.IsNegative(y.Mantissa)) y = Abs(y);
@@ -1043,6 +1490,25 @@ namespace Star3D.Maths.Numbers {
 		}
 
 		/// <inheritdoc/>
+		[NoDiscard]
+		public static BigDecimal Max(BigDecimal x, BigDecimal y) {
+			return x > y ? x : y;
+		}
+
+		/// <inheritdoc/>
+		[NoDiscard]
+		public static BigDecimal Min(BigDecimal x, BigDecimal y) {
+			return x > y ? y : x;
+		}
+
+		/// <inheritdoc/>
+		[NoDiscard]
+		public static BigDecimal Clamp(BigDecimal value, BigDecimal min, BigDecimal max) {
+			return Max(min, Min(max, value));
+		}
+
+		/// <inheritdoc/>
+		[NoDiscard]
 		public static BigDecimal Parse(ReadOnlySpan<char> s, NumberStyles style, IFormatProvider? provider) {
 			string decimalPoint = style.HasFlag(NumberStyles.AllowCurrencySymbol) ? NumberFormatInfo.GetInstance(provider).CurrencyDecimalSeparator : NumberFormatInfo.GetInstance(provider).NumberDecimalSeparator;
 			int deci = s.IndexOf(decimalPoint);
@@ -1065,6 +1531,7 @@ namespace Star3D.Maths.Numbers {
 		}
 
 		/// <inheritdoc/>
+		[NoDiscard]
 		public static BigDecimal Parse(string s, NumberStyles style, IFormatProvider? provider) {
 			return Parse(s.AsSpan(), style, provider);
 		}
@@ -1076,8 +1543,10 @@ namespace Star3D.Maths.Numbers {
 		/// If x is omitted, it is 0. If y is omitted, it is infinite. Typically, y will be omitted.
 		/// If T is present (string literal), the string will be truncated if the decimal places is larger than the value of x.
 		/// </summary>
-		/// <param name="format"></param>
-		/// <param name="formatProvider"></param>
+		/// <param name="s"></param>
+		/// <param name="style"></param>
+		/// <param name="provider"></param>
+		/// <param name="result"></param>
 		/// <returns></returns>
 		public static bool TryParse(ReadOnlySpan<char> s, NumberStyles style, IFormatProvider? provider, [MaybeNullWhen(false)] out BigDecimal result) {
 			string decimalPoint = style.HasFlag(NumberStyles.AllowCurrencySymbol) ? NumberFormatInfo.GetInstance(provider).CurrencyDecimalSeparator : NumberFormatInfo.GetInstance(provider).NumberDecimalSeparator;
@@ -1116,8 +1585,10 @@ namespace Star3D.Maths.Numbers {
 		/// If x is omitted, it is 0. If y is omitted, it is infinite. Typically, y will be omitted.
 		/// If T is present (string literal), the string will be truncated if the decimal places is larger than the value of x.
 		/// </summary>
-		/// <param name="format"></param>
-		/// <param name="formatProvider"></param>
+		/// <param name="s"></param>
+		/// <param name="style"></param>
+		/// <param name="provider"></param>
+		/// <param name="result"></param>
 		/// <returns></returns>
 		public static bool TryParse([NotNullWhen(true)] string? s, NumberStyles style, IFormatProvider? provider, [MaybeNullWhen(false)] out BigDecimal result) {
 			return TryParse(s.AsSpan(), style, provider, out result);
@@ -1130,13 +1601,15 @@ namespace Star3D.Maths.Numbers {
 		/// If x is omitted, it is 0. If y is omitted, it is infinite. Typically, y will be omitted.
 		/// If T is present (string literal), the string will be truncated if the decimal places is larger than the value of x.
 		/// </summary>
+		/// <param name="destination"></param>
+		/// <param name="charsWritten"></param>
 		/// <param name="format"></param>
-		/// <param name="formatProvider"></param>
+		/// <param name="provider"></param>
 		/// <returns></returns>
-		public bool TryFormat(Span<char> destination, out int charsWritten, ReadOnlySpan<char> format, IFormatProvider? provider) {
+		public readonly bool TryFormat(Span<char> destination, out int charsWritten, ReadOnlySpan<char> format, IFormatProvider? provider) {
 			string decimalPoint = NumberFormatInfo.GetInstance(provider).NumberDecimalSeparator ?? ".";
 
-			if (format != null) {
+			if (!format.IsEmpty) {
 				Span<System.Range> substrings = stackalloc System.Range[2];
 				int splitLength = format.Split(substrings, "R");
 				if (splitLength == 2) {
@@ -1177,15 +1650,23 @@ namespace Star3D.Maths.Numbers {
 
 		/// <summary>
 		/// Format this string using <c>xRy(T)</c> as a format argument to get the full detail, where 
-		/// x is the number of decimal places at a minimum and y is the length of the string.
+		/// x is the number of decimal places at a minimum and y is the maximum length of the string.
+		/// <para/>
 		/// If x is omitted, it is 0. If y is omitted, it is infinite. Typically, y will be omitted.
 		/// If T is present (string literal), the string will be truncated if the decimal places is larger than the value of x.
+		/// <para/>
+		/// Examples:
+		/// 4R10 = Display no fewer than four numbers after the decimal point. More is allowed. If the string is longer than 10 characters, however, trim it to 10 characters.<br/>
+		/// R5 = Display no more than five characters.<br/>
+		/// 2R = Display no fewer than two numbers after the decimal point. More is allowed.<br/>
+		/// 2RT = Display exactly two numbers after the decimal point.
 		/// </summary>
 		/// <param name="format"></param>
 		/// <param name="formatProvider"></param>
 		/// <returns></returns>
+		[NoDiscard]
 		public readonly string ToString(string? format, IFormatProvider? formatProvider = null) {
-			const string MESSAGE = "Expecting format string to be null, or in the form of xRy where x is the number of decimal places at a minimum, and y is the maximum string length, both of which may be omitted. The R tag will instruct it to use full detail. A null format option will export as scientific notation.";
+			const string MESSAGE = "For more information on the format, see the documentation of this method. If the documentation is not present, please check the install for [The Conservatory.xml]. If this is missing, please contact the developer.";
 			string decimalPoint = NumberFormatInfo.GetInstance(formatProvider).NumberDecimalSeparator ?? ".";
 
 			if (format != null) {
@@ -1216,6 +1697,7 @@ namespace Star3D.Maths.Numbers {
 		}
 
 		/// <inheritdoc/>
+		[NoDiscard]
 		public static BigDecimal Parse(ReadOnlySpan<char> s, IFormatProvider? provider) {
 			return Parse(s, NumberStyles.None, provider);
 		}
@@ -1226,6 +1708,7 @@ namespace Star3D.Maths.Numbers {
 		}
 
 		/// <inheritdoc/>
+		[NoDiscard]
 		public static BigDecimal Parse(string s, IFormatProvider? provider) {
 			return Parse(s, NumberStyles.None, provider);
 		}
@@ -1410,25 +1893,25 @@ namespace Star3D.Maths.Numbers {
 				result = (TOther)(object)value;
 				return true;
 			} else if (result is sbyte) {
-				return IntCast<TOther, sbyte, BigInteger>(ref value, 0, out result);
+				return IntCast<TOther, sbyte, BigInteger>(in value, 0, out result);
 			} else if (result is byte) {
-				return IntCast<TOther, byte, BigInteger>(ref value, 0, out result);
+				return IntCast<TOther, byte, BigInteger>(in value, 0, out result);
 			} else if (result is short) {
-				return IntCast<TOther, short, BigInteger>(ref value, 0, out result);
+				return IntCast<TOther, short, BigInteger>(in value, 0, out result);
 			} else if (result is ushort) {
-				return IntCast<TOther, ushort, BigInteger>(ref value, 0, out result);
+				return IntCast<TOther, ushort, BigInteger>(in value, 0, out result);
 			} else if (result is int) {
-				return IntCast<TOther, int, BigInteger>(ref value, 0, out result);
+				return IntCast<TOther, int, BigInteger>(in value, 0, out result);
 			} else if (result is uint) {
-				return IntCast<TOther, uint, BigInteger>(ref value, 0, out result);
+				return IntCast<TOther, uint, BigInteger>(in value, 0, out result);
 			} else if (result is long) {
-				return IntCast<TOther, long, BigInteger>(ref value, 0, out result);
+				return IntCast<TOther, long, BigInteger>(in value, 0, out result);
 			} else if (result is ulong) {
-				return IntCast<TOther, ulong, BigInteger>(ref value, 0, out result);
+				return IntCast<TOther, ulong, BigInteger>(in value, 0, out result);
 			} else if (result is Int128) {
-				return IntCast<TOther, Int128, BigInteger>(ref value, 0, out result);
+				return IntCast<TOther, Int128, BigInteger>(in value, 0, out result);
 			} else if (result is UInt128) {
-				return IntCast<TOther, UInt128, BigInteger>(ref value, 0, out result);
+				return IntCast<TOther, UInt128, BigInteger>(in value, 0, out result);
 			} else if (result is Half) {
 				if (value > Half.MaxValue || value < Half.MinValue) throw new OverflowException();
 				result = (TOther)(object)(Half)value;
@@ -1460,25 +1943,25 @@ namespace Star3D.Maths.Numbers {
 				result = (TOther)(object)value;
 				return true;
 			} else if (result is sbyte) {
-				return IntCast<TOther, sbyte, BigInteger>(ref value, 1, out result);
+				return IntCast<TOther, sbyte, BigInteger>(in value, 1, out result);
 			} else if (result is byte) {
-				return IntCast<TOther, byte, BigInteger>(ref value, 1, out result);
+				return IntCast<TOther, byte, BigInteger>(in value, 1, out result);
 			} else if (result is short) {
-				return IntCast<TOther, short, BigInteger>(ref value, 1, out result);
+				return IntCast<TOther, short, BigInteger>(in value, 1, out result);
 			} else if (result is ushort) {
-				return IntCast<TOther, ushort, BigInteger>(ref value, 1, out result);
+				return IntCast<TOther, ushort, BigInteger>(in value, 1, out result);
 			} else if (result is int) {
-				return IntCast<TOther, int, BigInteger>(ref value, 1, out result);
+				return IntCast<TOther, int, BigInteger>(in value, 1, out result);
 			} else if (result is uint) {
-				return IntCast<TOther, uint, BigInteger>(ref value, 1, out result);
+				return IntCast<TOther, uint, BigInteger>(in value, 1, out result);
 			} else if (result is long) {
-				return IntCast<TOther, long, BigInteger>(ref value, 1, out result);
+				return IntCast<TOther, long, BigInteger>(in value, 1, out result);
 			} else if (result is ulong) {
-				return IntCast<TOther, ulong, BigInteger>(ref value, 1, out result);
+				return IntCast<TOther, ulong, BigInteger>(in value, 1, out result);
 			} else if (result is Int128) {
-				return IntCast<TOther, Int128, BigInteger>(ref value, 1, out result);
+				return IntCast<TOther, Int128, BigInteger>(in value, 1, out result);
 			} else if (result is UInt128) {
-				return IntCast<TOther, UInt128, BigInteger>(ref value, 1, out result);
+				return IntCast<TOther, UInt128, BigInteger>(in value, 1, out result);
 			} else if (result is Half) {
 				if (value > Half.MaxValue) value = Half.PositiveInfinity;
 				if (value < Half.MinValue) value = Half.NegativeInfinity;
@@ -1514,25 +1997,25 @@ namespace Star3D.Maths.Numbers {
 				result = (TOther)(object)value;
 				return true;
 			} else if (result is sbyte) {
-				return IntCast<TOther, sbyte, BigInteger>(ref value, 2, out result);
+				return IntCast<TOther, sbyte, BigInteger>(in value, 2, out result);
 			} else if (result is byte) {
-				return IntCast<TOther, byte, BigInteger>(ref value, 2, out result);
+				return IntCast<TOther, byte, BigInteger>(in value, 2, out result);
 			} else if (result is short) {
-				return IntCast<TOther, short, BigInteger>(ref value, 2, out result);
+				return IntCast<TOther, short, BigInteger>(in value, 2, out result);
 			} else if (result is ushort) {
-				return IntCast<TOther, ushort, BigInteger>(ref value, 2, out result);
+				return IntCast<TOther, ushort, BigInteger>(in value, 2, out result);
 			} else if (result is int) {
-				return IntCast<TOther, int, BigInteger>(ref value, 2, out result);
+				return IntCast<TOther, int, BigInteger>(in value, 2, out result);
 			} else if (result is uint) {
-				return IntCast<TOther, uint, BigInteger>(ref value, 2, out result);
+				return IntCast<TOther, uint, BigInteger>(in value, 2, out result);
 			} else if (result is long) {
-				return IntCast<TOther, long, BigInteger>(ref value, 2, out result);
+				return IntCast<TOther, long, BigInteger>(in value, 2, out result);
 			} else if (result is ulong) {
-				return IntCast<TOther, ulong, BigInteger>(ref value, 2, out result);
+				return IntCast<TOther, ulong, BigInteger>(in value, 2, out result);
 			} else if (result is Int128) {
-				return IntCast<TOther, Int128, BigInteger>(ref value, 2, out result);
+				return IntCast<TOther, Int128, BigInteger>(in value, 2, out result);
 			} else if (result is UInt128) {
-				return IntCast<TOther, UInt128, BigInteger>(ref value, 2, out result);
+				return IntCast<TOther, UInt128, BigInteger>(in value, 2, out result);
 			} else if (result is Half) {
 				if (value > Half.MaxValue) value = Half.MaxValue;
 				if (value < Half.MinValue) value = Half.MinValue;
@@ -1558,7 +2041,7 @@ namespace Star3D.Maths.Numbers {
 			return false;
 		}
 
-		private static bool IntCast<TOther, TInteger, TBigInteger>(ref readonly BigDecimal value, byte checkType, out TOther result)
+		private static bool IntCast<TOther, TInteger, TBigInteger>(in BigDecimal value, byte checkType, out TOther result)
 			where TOther : INumberBase<TOther>
 			where TInteger : INumberBase<TInteger>, IMinMaxValue<TInteger>
 			where TBigInteger : INumberBase<TBigInteger> // Must always be BigInteger
@@ -1597,13 +2080,27 @@ namespace Star3D.Maths.Numbers {
 
 
 		static BigDecimal() {
-			BigDecimal e = 0;
-			for (int i = 0; i < 50; i++) {
-				e += One / Factorial(i);
+			BigDecimal e = 1;
+			BigDecimal factorialI = 1;
+			for (int i = 1; i < 100; i++) {
+				factorialI *= i;
+				e += One / factorialI;
 			}
 			E = e;
+
+			// Way easier than implementing the algorithm myself.
 			Pi = Parse("3.1415926535897932384626433832795028841971693993751058209749445923078164062862089986280348253421170679821480865132823066470938446095505822317253594081284811174502841027019385211055596446229489549303819644288109756659334461284756482337867831652712019091456485669234603486104543266482133936072602491412737245870066063155881748815209209628292540917153643678925903600113305305488204665213841469519415116094330572703657595919530921861173819326117931051185480744623799627495673518857527248912279381830119491298336733624406566430860213949463952247371907021798609437027705392171762931767523846748184676694051320005681271452635608277857713427577896091736371787214684409012249534301465495853710507922796892589235420199561121290219608640344181598136297747713099605187072113499999983729780499510597317328160963185950244594553469083026425223082533446850352619311881710100031378387528865875332083814206171776691473035982534904287554687311595628638823537875937519577818577805321712268066130019278766111959092164201989");
+			InversePi = One / Pi;
 			Tau = Pi * 2;
+
+			BigDecimal ln_two = -ApproximateNaturalLog(OneHalf); // ln(x/y) = ln(x) - ln(y). 1/0.5 => ln(1) - ln(0.5) => 0 - ln(0.5)
+			BigDecimal ln_oneAndQuarter = ApproximateNaturalLog(XPointY(1, 25));
+			BigDecimal ln_twoAndHalf = ln_two + ln_oneAndQuarter;
+			BigDecimal ln_five = ln_two + ln_twoAndHalf;
+			BigDecimal ln_ten = ln_two + ln_five;
+			Ln2 = ln_two;
+			Ln10 = ln_ten;
+			Ln100 = ln_ten + ln_ten;
 
 			HalfMinValue = Half.MinValue;
 			HalfMaxValue = Half.MaxValue;
@@ -1617,6 +2114,5 @@ namespace Star3D.Maths.Numbers {
 			DoubleMaxValue = double.MaxValue;
 			DoubleEpsilonValue = double.Epsilon;
 		}
-
 	}
 }
